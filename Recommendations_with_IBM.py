@@ -198,3 +198,81 @@ def user_user_recs_part2(user_id, m=10):
     
     
     return recs, rec_names
+
+#Matrix Factorization
+# Load the matrix here
+user_item_matrix = pd.read_pickle('user_item_matrix.p')
+
+# Perform SVD on the User-Item Matrix Here
+u, s, vt = np.linalg.svd(user_item_matrix)
+s.shape, u.shape, vt.shape# use the built in to get the three matrices
+
+df_train = df.head(40000)
+df_test = df.tail(5993)
+
+def create_test_and_train_user_item(df_train, df_test):
+    '''
+    INPUT:
+    df_train - training dataframe
+    df_test - test dataframe
+    
+    OUTPUT:
+    user_item_train - a user-item matrix of the training dataframe 
+                      (unique users for each row and unique articles for each column)
+    user_item_test - a user-item matrix of the testing dataframe 
+                    (unique users for each row and unique articles for each column)
+    test_idx - all of the test user ids
+    test_arts - all of the test article ids
+    
+    '''
+    # Your code here
+    user_item_train = df_train.drop_duplicates().groupby(by=['user_id', 'article_id']).count().reset_index().\
+            pivot(index='user_id', columns='article_id', values='title').fillna(0)
+    user_item_test = df_test.drop_duplicates().groupby(by=['user_id', 'article_id']).count().reset_index().\
+            pivot(index='user_id', columns='article_id', values='title').fillna(0)
+    test_idx = user_item_test.index
+    test_arts = user_item_test.columns
+    
+    return user_item_train, user_item_test, test_idx, test_arts
+
+
+# fit SVD on the user_item_train matrix
+u_train, s_train, vt_train = np.linalg.svd(user_item_train)
+
+num_latent_feats = np.arange(10,700+10,20)
+all_errs = []
+errs_train = []
+errs_test = []
+
+for k in num_latent_feats:
+    
+    test_idx = np.intersect1d(user_item_train.index, user_item_test.index)
+    row_idxs = user_item_train.index.isin(test_idx)
+    col_idxs = [user_item.columns.tolist().index(i) for i in user_item_test.columns.tolist()]
+    u_test = u_train[row_idxs, :]
+    vt_test = vt_train[:, col_idxs]
+    
+    # restructure with k latent features
+    s_train_lat, u_train_lat, vt_train_lat = np.diag(s_train[:k]), u_train[:, :k], vt_train[:k, :]
+    u_test_lat, vt_test_lat = u_test[:, :k], vt_test[:k, :]
+    
+    # take dot product
+    user_item_train_preds = np.around(np.dot(np.dot(u_train_lat, s_train_lat), vt_train_lat))
+    user_item_test_preds = np.around(np.dot(np.dot(u_test_lat, s_train_lat), vt_test_lat))
+    all_errs.append(1 - ((np.sum(user_item_test_preds)+np.sum(np.sum(user_item_test)))/(user_item_test.shape[0]\
+                                                                                        *user_item_test.shape[1])))
+    
+    # compute error for each prediction to actual value
+    diffs_train = np.subtract(user_item_train, user_item_train_preds)
+    user_item_test = user_item_test.loc[test_idx, :]
+    diffs_test = np.subtract(user_item_test, user_item_test_preds)
+    
+    # total errors and keep track of them
+    err_train = np.sum(np.sum(np.abs(diffs_train)))
+    err_test = np.sum(np.sum(np.abs(diffs_test)))
+    errs_train.append(err_train)
+    errs_test.append(err_test)
+    
+#all_errs, errs_train, errs_test
+
+
